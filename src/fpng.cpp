@@ -1005,8 +1005,9 @@ do { \
 		// write BFINAL bit
 		PUT_BITS(1, 1);
 
-		std::vector<uint32_t> codes((w + 1) * h);
-		uint32_t* pDst_codes = codes.data();
+		uint32_t pDst_codes_size = (w + 1) * h;
+		uint32_t* pDst_codes_buf = (uint32_t *)malloc(sizeof(uint32_t) * pDst_codes_size);
+		uint32_t* pDst_codes = pDst_codes_buf;
 
 		uint32_t lit_freq[DEFL_MAX_HUFF_SYMBOLS_0];
 		memset(lit_freq, 0, sizeof(lit_freq));
@@ -1084,8 +1085,8 @@ do { \
 		} // y
 
 		assert(src_ofs == h * bpl);
-		const uint32_t total_codes = (uint32_t)(pDst_codes - codes.data());
-		assert(total_codes <= codes.size());
+		const uint32_t total_codes = (uint32_t)(pDst_codes - pDst_codes_buf);
+		assert(total_codes <= pDst_codes_size);
 								
 		defl_huff dh;
 		
@@ -1098,14 +1099,17 @@ do { \
 		dh.m_huff_count[1][dist_sym + 1] = 1; // to workaround a bug in wuffs decoder
 
 		if (!defl_start_dynamic_block(&dh, pDst, dst_ofs, dst_buf_size, bit_buf, bit_buf_size))
+		{
+			free(pDst_codes_buf);
 			return 0;
+		}
 
 		assert(bit_buf_size <= 7);
 		assert(dh.m_huff_codes[1][dist_sym] == 0 && dh.m_huff_code_sizes[1][dist_sym] == 1);
 				
 		for (uint32_t i = 0; i < total_codes; i++)
 		{
-			uint32_t c = codes[i];
+			uint32_t c = pDst_codes[i];
 
 			uint32_t c_type = c & 0xFF;
 			if (c_type == 0)
@@ -1150,13 +1154,17 @@ do { \
 		for (uint32_t i = 0; i < 4; i++)
 		{
 			if ((dst_ofs + 1) > dst_buf_size)
+			{
+				free(pDst_codes_buf);
 				return 0;
+			}
 			*(uint8_t*)(pDst + dst_ofs) = (uint8_t)(src_adler32 >> 24);
 			dst_ofs++;
 
 			src_adler32 <<= 8;
 		}
 
+		free(pDst_codes_buf);
 		return dst_ofs;
 	}
 
@@ -1282,9 +1290,9 @@ do { \
 		// write BFINAL bit
 		PUT_BITS(1, 1);
 
-		std::vector<uint64_t> codes;
-		codes.resize((w + 1) * h);
-		uint64_t* pDst_codes = codes.data();
+		uint32_t pDst_codes_size = (w + 1) * h;
+		uint64_t* pDst_codes_buf = (uint64_t *)malloc(sizeof(uint64_t) * pDst_codes_size);
+		uint64_t* pDst_codes = pDst_codes_buf;
 
 		uint32_t lit_freq[DEFL_MAX_HUFF_SYMBOLS_0];
 		memset(lit_freq, 0, sizeof(lit_freq));
@@ -1363,8 +1371,8 @@ do { \
 		} // y
 
 		assert(src_ofs == h * bpl);
-		const uint32_t total_codes = (uint32_t)(pDst_codes - codes.data());
-		assert(total_codes <= codes.size());
+		const uint32_t total_codes = (uint32_t)(pDst_codes - pDst_codes_buf);
+		assert(total_codes <= pDst_codes_size);
 						
 		defl_huff dh;
 		
@@ -1377,14 +1385,17 @@ do { \
 		dh.m_huff_count[1][dist_sym + 1] = 1; // to workaround a bug in wuffs decoder
 
 		if (!defl_start_dynamic_block(&dh, pDst, dst_ofs, dst_buf_size, bit_buf, bit_buf_size))
+		{
+			free(pDst_codes_buf);
 			return 0;
+		}
 
 		assert(bit_buf_size <= 7);
 		assert(dh.m_huff_codes[1][dist_sym] == 0 && dh.m_huff_code_sizes[1][dist_sym] == 1);
 
 		for (uint32_t i = 0; i < total_codes; i++)
 		{
-			uint64_t c = codes[i];
+			uint64_t c = pDst_codes_buf[i];
 
 			uint32_t c_type = (uint32_t)(c & 0xFF);
 			if (c_type == 0)
@@ -1436,13 +1447,17 @@ do { \
 		for (uint32_t i = 0; i < 4; i++)
 		{
 			if ((dst_ofs + 1) > dst_buf_size)
+			{
+				free(pDst_codes_buf);
 				return 0;
+			}
 			*(uint8_t*)(pDst + dst_ofs) = (uint8_t)(src_adler32 >> 24);
 			dst_ofs++;
 
 			src_adler32 <<= 8;
 		}
 
+		free(pDst_codes_buf);
 		return dst_ofs;
 	}
 
@@ -1579,13 +1594,13 @@ do_literals:
 		return dst_ofs;
 	}
 
-	static void vector_append(std::vector<uint8_t>& buf, const void* pData, size_t len)
+	static void vector_append(uint8_t *&buf, size_t &buf_size, const void* pData, size_t len)
 	{
-		if (len)
+		if(len)
 		{
-			size_t l = buf.size();
-			buf.resize(l + len);
-			memcpy(buf.data() + l, pData, len);
+			buf_size += len;
+			buf = (uint8_t*)realloc(buf, buf_size);
+			memcpy(buf, pData, len);
 		}
 	}
 		
@@ -1659,7 +1674,7 @@ do_literals:
 		}
 	}
 
-	bool fpng_encode_image_to_memory(const void* pImage, uint32_t w, uint32_t h, uint32_t num_chans, std::vector<uint8_t>& out_buf, uint32_t flags)
+	bool fpng_encode_image_to_memory(const void* pImage, uint32_t w, uint32_t h, uint32_t num_chans, uint8_t *&out_buf, size_t &out_buf_size, uint32_t flags)
 	{
 		if (!endian_check())
 		{
@@ -1682,8 +1697,8 @@ do_literals:
 		int i, bpl = w * num_chans;
 		uint32_t y;
 
-		std::vector<uint8_t> temp_buf;
-		temp_buf.resize((bpl + 1) * h + 7);
+		size_t temp_buf_size = ((bpl + 1) * h + 7);
+		uint8_t *temp_buf = (uint8_t *)malloc(temp_buf_size);
 		uint32_t temp_buf_ofs = 0;
 
 		for (y = 0; y < h; ++y)
@@ -1701,8 +1716,9 @@ do_literals:
 		const uint32_t PNG_HEADER_SIZE = 58;
 				
 		uint32_t out_ofs = PNG_HEADER_SIZE;
-				
-		out_buf.resize((out_ofs + (bpl + 1) * h + 7) & ~7);
+
+		out_buf_size = (out_ofs + (bpl + 1) * h + 7) & ~7;
+		out_buf = (uint8_t *)malloc(out_buf_size);
 
 		uint32_t defl_size = 0;
 		if ((flags & FPNG_FORCE_UNCOMPRESSED) == 0)
@@ -1710,16 +1726,16 @@ do_literals:
 			if (num_chans == 3)
 			{
 				if (flags & FPNG_ENCODE_SLOWER)
-					defl_size = pixel_deflate_dyn_3_rle(temp_buf.data(), w, h, &out_buf[out_ofs], (uint32_t)out_buf.size() - out_ofs);
+					defl_size = pixel_deflate_dyn_3_rle(temp_buf, w, h, &out_buf[out_ofs], (uint32_t)out_buf_size - out_ofs);
 				else
-					defl_size = pixel_deflate_dyn_3_rle_one_pass(temp_buf.data(), w, h, &out_buf[out_ofs], (uint32_t)out_buf.size() - out_ofs);
+					defl_size = pixel_deflate_dyn_3_rle_one_pass(temp_buf, w, h, &out_buf[out_ofs], (uint32_t)out_buf_size - out_ofs);
 			}
 			else
 			{
 				if (flags & FPNG_ENCODE_SLOWER)
-					defl_size = pixel_deflate_dyn_4_rle(temp_buf.data(), w, h, &out_buf[out_ofs], (uint32_t)out_buf.size() - out_ofs);
+					defl_size = pixel_deflate_dyn_4_rle(temp_buf, w, h, &out_buf[out_ofs], (uint32_t)out_buf_size - out_ofs);
 				else
-					defl_size = pixel_deflate_dyn_4_rle_one_pass(temp_buf.data(), w, h, &out_buf[out_ofs], (uint32_t)out_buf.size() - out_ofs);
+					defl_size = pixel_deflate_dyn_4_rle_one_pass(temp_buf, w, h, &out_buf[out_ofs], (uint32_t)out_buf_size - out_ofs);
 			}
 		}
 
@@ -1742,26 +1758,29 @@ do_literals:
 				temp_buf_ofs += 1 + bpl;
 			}
 
-			assert(temp_buf_ofs <= temp_buf.size());
-						
-			out_buf.resize(out_ofs + 6 + temp_buf_ofs + ((temp_buf_ofs + 65534) / 65535) * 5);
+			assert(temp_buf_ofs <= temp_buf_size);
 
-			uint32_t raw_size = write_raw_block(temp_buf.data(), (uint32_t)temp_buf_ofs, out_buf.data() + out_ofs, (uint32_t)out_buf.size() - out_ofs);
+			out_buf_size = out_ofs + 6 + temp_buf_ofs + ((temp_buf_ofs + 65534) / 65535) * 5;
+			out_buf = (uint8_t*)realloc(out_buf, out_buf_size);
+
+			uint32_t raw_size = write_raw_block(temp_buf, (uint32_t)temp_buf_ofs, out_buf + out_ofs, (uint32_t)out_buf_size - out_ofs);
 			if (!raw_size)
 			{
 				// Somehow we miscomputed the size of the output buffer.
 				assert(0);
+				free(temp_buf);
 				return false;
 			}
 
 			zlib_size = raw_size;
 		}
 		
-		assert((out_ofs + zlib_size) <= out_buf.size());
+		assert((out_ofs + zlib_size) <= out_buf_size);
 
-		out_buf.resize(out_ofs + zlib_size);
+		out_buf_size = out_ofs + zlib_size;
+		out_buf = (uint8_t*)realloc(out_buf, out_buf_size);
 
-		const uint32_t idat_len = (uint32_t)out_buf.size() - PNG_HEADER_SIZE;
+		const uint32_t idat_len = (uint32_t)out_buf_size - PNG_HEADER_SIZE;
 
 		// Write real PNG header, fdEC chunk, and the beginning of the IDAT chunk
 		{
@@ -1787,26 +1806,28 @@ do_literals:
 			for (i = 0; i < 4; ++i, c <<= 8)
 				((uint8_t*)(pnghdr + 29))[i] = (uint8_t)(c >> 24);
 
-			memcpy(out_buf.data(), pnghdr, PNG_HEADER_SIZE);
+			memcpy(out_buf, pnghdr, PNG_HEADER_SIZE);
 		}
 
 		// Write IDAT chunk's CRC32 and a 0 length IEND chunk
-		vector_append(out_buf, "\0\0\0\0\0\0\0\0\x49\x45\x4e\x44\xae\x42\x60\x82", 16); // IDAT CRC32, followed by the IEND chunk
+		vector_append(out_buf, out_buf_size, "\0\0\0\0\0\0\0\0\x49\x45\x4e\x44\xae\x42\x60\x82", 16); // IDAT CRC32, followed by the IEND chunk
 
 		// Compute IDAT crc32
-		uint32_t c = (uint32_t)fpng_crc32(out_buf.data() + PNG_HEADER_SIZE - 4, idat_len + 4, FPNG_CRC32_INIT);
+		uint32_t c = (uint32_t)fpng_crc32(out_buf + PNG_HEADER_SIZE - 4, idat_len + 4, FPNG_CRC32_INIT);
 		
 		for (i = 0; i < 4; ++i, c <<= 8)
-			(out_buf.data() + out_buf.size() - 16)[i] = (uint8_t)(c >> 24);
+			(out_buf + out_buf_size - 16)[i] = (uint8_t)(c >> 24);
 				
+		free(temp_buf);
 		return true;
 	}
 
 #ifndef FPNG_NO_STDIO
 	bool fpng_encode_image_to_file(const char* pFilename, const void* pImage, uint32_t w, uint32_t h, uint32_t num_chans, uint32_t flags)
 	{
-		std::vector<uint8_t> out_buf;
-		if (!fpng_encode_image_to_memory(pImage, w, h, num_chans, out_buf, flags))
+		uint8_t *out_buf = 0;
+		size_t out_buf_size = 0;
+		if (!fpng_encode_image_to_memory(pImage, w, h, num_chans, out_buf, out_buf_size, flags))
 			return false;
 
 		FILE* pFile = nullptr;
@@ -1818,7 +1839,7 @@ do_literals:
 		if (!pFile)
 			return false;
 
-		if (fwrite(out_buf.data(), 1, out_buf.size(), pFile) != out_buf.size())
+		if (fwrite(out_buf, 1, out_buf_size, pFile) != out_buf_size)
 		{
 			fclose(pFile);
 			return false;
@@ -3082,9 +3103,10 @@ do_literals:
 		return fpng_get_info_internal(pImage, image_size, width, height, channels_in_file, idat_ofs, idat_len);
 	}
 
-	int fpng_decode_memory(const void *pImage, uint32_t image_size, std::vector<uint8_t> &out, uint32_t& width, uint32_t& height, uint32_t &channels_in_file, uint32_t desired_channels)
+	int fpng_decode_memory(const void *pImage, uint32_t image_size, uint8_t *&out, uint32_t& width, uint32_t& height, uint32_t &channels_in_file, uint32_t desired_channels)
 	{
-		out.resize(0);
+		size_t out_size = 0;
+		out = 0;
 		width = 0;
 		height = 0;
 		channels_in_file = 0;
@@ -3108,7 +3130,8 @@ do_literals:
 		if ((sizeof(size_t) == sizeof(uint32_t)) && (mem_needed >= 0x80000000))
 			return FPNG_DECODE_FAILED_DIMENSIONS_TOO_LARGE;
 
-		out.resize(mem_needed);
+		out_size = mem_needed;
+		out = (uint8_t *)malloc(mem_needed);
 		
 		const uint8_t* pIDAT_data = static_cast<const uint8_t*>(pImage) + idat_ofs + sizeof(uint32_t) * 2;
 		const uint32_t src_len = image_size - (idat_ofs + sizeof(uint32_t) * 2);
@@ -3117,21 +3140,22 @@ do_literals:
 		if (desired_channels == 3)
 		{
 			if (channels_in_file == 3)
-				decomp_status = fpng_pixel_zlib_decompress_3<3>(pIDAT_data, src_len, idat_len, out.data(), width, height);
+				decomp_status = fpng_pixel_zlib_decompress_3<3>(pIDAT_data, src_len, idat_len, out, width, height);
 			else
-				decomp_status = fpng_pixel_zlib_decompress_4<3>(pIDAT_data, src_len, idat_len, out.data(), width, height);
+				decomp_status = fpng_pixel_zlib_decompress_4<3>(pIDAT_data, src_len, idat_len, out, width, height);
 		}
 		else
 		{
 			if (channels_in_file == 3)
-				decomp_status = fpng_pixel_zlib_decompress_3<4>(pIDAT_data, src_len, idat_len, out.data(), width, height);
+				decomp_status = fpng_pixel_zlib_decompress_3<4>(pIDAT_data, src_len, idat_len, out, width, height);
 			else
-				decomp_status = fpng_pixel_zlib_decompress_4<4>(pIDAT_data, src_len, idat_len, out.data(), width, height);
+				decomp_status = fpng_pixel_zlib_decompress_4<4>(pIDAT_data, src_len, idat_len, out, width, height);
 		}
 		if (!decomp_status)
 		{
 			// Something went wrong. Either the file data was corrupted, or it doesn't conform to one of our zlib/Deflate constraints.
 			// The conservative thing to do is indicate it wasn't written by us, and let the general purpose PNG decoder handle it.
+			free(out);
 			return FPNG_DECODE_NOT_FPNG;
 		}
 
@@ -3139,7 +3163,7 @@ do_literals:
 	}
 
 #ifndef FPNG_NO_STDIO
-	int fpng_decode_file(const char* pFilename, std::vector<uint8_t>& out, uint32_t& width, uint32_t& height, uint32_t& channels_in_file, uint32_t desired_channels)
+	int fpng_decode_file(const char* pFilename, uint8_t *&out, uint32_t& width, uint32_t& height, uint32_t& channels_in_file, uint32_t desired_channels)
 	{
 		FILE* pFile = nullptr;
 
@@ -3176,16 +3200,20 @@ do_literals:
 			return FPNG_DECODE_FILE_TOO_LARGE;
 		}
 
-		std::vector<uint8_t> buf((size_t)filesize);
-		if (fread(buf.data(), 1, buf.size(), pFile) != buf.size())
+		size_t buf_size = filesize;
+		uint8_t *buf = (uint8_t *)malloc(filesize);
+		if (fread(buf, 1, buf_size, pFile) != buf_size)
 		{
 			fclose(pFile);
+			free(buf);
 			return FPNG_DECODE_FILE_READ_FAILED;
 		}
 
 		fclose(pFile);
 
-		return fpng_decode_memory(buf.data(), (uint32_t)buf.size(), out, width, height, channels_in_file, desired_channels);
+		int result = fpng_decode_memory(buf, (uint32_t)buf_size, out, width, height, channels_in_file, desired_channels);
+		free(buf);
+		return result;
 	}
 #endif
 
