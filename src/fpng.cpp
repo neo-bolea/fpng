@@ -1600,7 +1600,7 @@ do_literals:
 		{
 			buf_size += len;
 			buf = (uint8_t*)realloc(buf, buf_size);
-			memcpy(buf, pData, len);
+			memcpy(buf + buf_size - len, pData, len);
 		}
 	}
 		
@@ -1837,14 +1837,19 @@ do_literals:
 		pFile = fopen(pFilename, "wb");
 #endif
 		if (!pFile)
+		{
+			free(out_buf);
 			return false;
+		}
 
 		if (fwrite(out_buf, 1, out_buf_size, pFile) != out_buf_size)
 		{
+			free(out_buf);
 			fclose(pFile);
 			return false;
 		}
 
+		free(out_buf);
 		return (fclose(pFile) != EOF);
 	}
 #endif
